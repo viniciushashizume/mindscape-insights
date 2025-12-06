@@ -1,12 +1,24 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState } from "react";
+import { Header } from "@/components/Header";
+import { BottomNavigation, TabType } from "@/components/BottomNavigation";
+import { ArquetiposTab } from "@/components/ArquetiposTab";
+import { SintomasTab } from "@/components/SintomasTab";
+import { LinguisticaTab } from "@/components/LinguisticaTab";
 
 const Index = () => {
+  const [activeTab, setActiveTab] = useState<TabType>("arquetipos");
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-background">
+      <Header />
+      
+      <main className="mx-auto max-w-md px-4 py-6">
+        {activeTab === "arquetipos" && <ArquetiposTab />}
+        {activeTab === "sintomas" && <SintomasTab />}
+        {activeTab === "linguistica" && <LinguisticaTab />}
+      </main>
+
+      <BottomNavigation activeTab={activeTab} onTabChange={setActiveTab} />
     </div>
   );
 };
