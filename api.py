@@ -6,6 +6,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+from collections import Counter
 
 app = FastAPI()
 
@@ -221,6 +223,138 @@ def get_sintomas_heatmap():
         return data
     return {"error": "Erro ao processar dados de sintomas. Verifique se 'Dataset-Mental-Disorders.csv' existe."}
 
+
+# ==========================================
+# PARTE 3: LÓGICA DE LINGUÍSTICA (NLP) - CORRIGIDA
+# ==========================================
+
+def get_vocab_cleaned(texts, final_stops):
+    """
+    Tokenização com limpeza rigorosa de pontuação para evitar que
+    palavras como 'me,' (com vírgula) passem pelo filtro de tamanho.
+    """
+    # Junta tudo e converte para minúsculas
+    all_text = ' '.join(texts).lower()
+    
+    # Separa por espaços
+    raw_words = all_text.split()
+    
+    cleaned_words = []
+    for w in raw_words:
+        # Remove pontuação das bordas da palavra (ex: "me," vira "me")
+        clean_w = w.strip(".,!?:;\"'()[]{}*-")
+        
+        # Filtros:
+        # 1. Deve ter mais de 2 letras (remove 'i', 'am', 'me' se limpo corretamente)
+        # 2. Não pode estar na lista de stopwords
+        # 3. Deve ser alfabético (opcional, remove números soltos)
+        if len(clean_w) > 2 and clean_w not in final_stops and clean_w.isalpha():
+            cleaned_words.append(clean_w)
+            
+    return cleaned_words
+
+def analyze_distinctive_words_logic(df, class_a_label, class_b_label):
+    # 1. Definição Avançada de Stopwords (Manual + Scikit-learn)
+    base_stops = set(ENGLISH_STOP_WORDS)
+    
+    # Lista explícita com as palavras que você pediu para remover e variações comuns
+    custom_stops = {
+        # Palavras solicitadas
+        "me", "my", "myself", "i", "im", "i'm", "ive", "i've", "id", "i'd",
+        "its", "it's", "dont", "don't", "cant", "can't", "wont", "won't",
+        "didnt", "didn't", "doesnt", "doesn't", "isnt", "isn't", "arent", "aren't",
+        "wasnt", "wasn't", "werent", "weren't", "hasnt", "hasn't", "havent", "haven't",
+        "hadnt", "hadn't", "wouldnt", "wouldn't", "shouldnt", "shouldn't", "couldnt", "couldn't",
+        "thats", "that's", "theres", "there's", "heres", "here's", "whats", "what's",
+        "youre", "you're", "we're", "they're", "yall", "just", "really", "very", "like", 
+        "actually", "literally", "basically", "want", "know", "think", "going", "got", 
+        "get", "make", "time", "day", "people", "thing", "things", "said"
+    }
+    
+    final_stops = base_stops.union(custom_stops)
+
+    # 2. Filtrar textos
+    texts_a = df[df['status'] == class_a_label]['clean_statement'].astype(str)
+    texts_b = df[df['status'] == class_b_label]['clean_statement'].astype(str)
+
+    # 3. Contagem com a nova função de limpeza
+    vocab_a = Counter(get_vocab_cleaned(texts_a, final_stops))
+    vocab_b = Counter(get_vocab_cleaned(texts_b, final_stops))
+
+    # 4. Cálculo de Pontuação
+    total_a = sum(vocab_a.values())
+    total_b = sum(vocab_b.values())
+
+    if total_a == 0 or total_b == 0:
+        return []
+
+    distinctive_score = {}
+    all_keys = set(vocab_a.keys()).union(set(vocab_b.keys()))
+
+    for word in all_keys:
+        freq_a = vocab_a.get(word, 0) / total_a
+        freq_b = vocab_b.get(word, 0) / total_b
+        
+        # Score = diferença de frequência
+        score = (freq_a - freq_b) * 1000
+        distinctive_score[word] = score
+
+    # Ordenar do maior score positivo (mais frequente no diagnóstico)
+    top_a = sorted(distinctive_score.items(), key=lambda x: x[1], reverse=True)[:20] # Pegando top 20 para garantir
+    
+    # Formata para o Front-end
+    result_data = [{"word": word, "score": round(score, 1)} for word, score in top_a if score > 0]
+    
+    # Retorna apenas os top 15 finais
+    return result_data[:15]
+
+@app.get("/api/linguistica-data")
+def get_linguistica_data():
+    filename = 'Combined Data.csv'
+    if not os.path.exists(filename):
+        # Fallback para tentar achar em subpastas se necessário, ou retornar erro
+        return {"error": f"Arquivo '{filename}' não encontrado. Certifique-se de que ele está na pasta raiz do backend."}
+    
+    try:
+        # Carregar Dataset
+        df = pd.read_csv(filename)
+        
+        # Normalização de colunas
+        df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
+        
+        # Ajuste de nomes de colunas (caso o CSV tenha 'statement' em vez de 'clean_statement')
+        if 'statement' in df.columns and 'clean_statement' not in df.columns:
+            df['clean_statement'] = df['statement']
+            
+        # Verifica coluna de status
+        if 'status' not in df.columns:
+             return {"error": "Coluna 'status' não encontrada no CSV. Verifique o arquivo."}
+
+        df['clean_statement'] = df['clean_statement'].fillna('')
+
+        diagnosticos_alvo = ['Depression', 'Anxiety', 'Suicidal', 'Stress', 'Bipolar']
+        base_normal = 'Normal'
+        
+        response_data = {}
+
+        for diag in diagnosticos_alvo:
+            # Busca case-insensitive no dataset para garantir match (ex: 'depression' == 'Depression')
+            unique_statuses = df['status'].unique()
+            
+            match = next((s for s in unique_statuses if str(s).lower() == diag.lower()), None)
+            match_normal = next((s for s in unique_statuses if str(s).lower() == base_normal.lower()), None)
+            
+            if match and match_normal:
+                words_data = analyze_distinctive_words_logic(df, match, match_normal)
+                response_data[diag] = words_data
+            else:
+                response_data[diag] = []
+
+        return response_data
+
+    except Exception as e:
+        print(f"Erro NLP: {e}")
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
