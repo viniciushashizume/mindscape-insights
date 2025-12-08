@@ -173,7 +173,8 @@ def processar_sintomas():
         if 'Patient Number' in df.columns:
             df = df.drop('Patient Number', axis=1)
 
-        # 2. Renomear colunas (Essencial para encontrar os sintomas da lista)
+        # 2. Renomear colunas (IGUAL AO COLAB)
+        # O Colab usa este mapa para corrigir os nomes. O API precisa dele também.
         col_rename_map = {
             'Euphoric': 'Euphoria',
             'Sleep dissorder': 'Sleep_dissorder',
@@ -184,52 +185,49 @@ def processar_sintomas():
         }
         df = df.rename(columns=col_rename_map)
 
-        # 3. Limpeza Geral de Espaços (A CORREÇÃO PRINCIPAL)
-        # Remove espaços antes/depois de textos em TODAS as colunas de texto
-        # Isso garante que 'Usually ' vire 'Usually' e bata com o mapa.
-        df_obj = df.select_dtypes(['object'])
-        df[df_obj.columns] = df_obj.apply(lambda x: x.str.strip())
-
-        # 4. Mapas e Lógica do Colab (sintomas.py)
+        # 3. Mapas de Valores
         freq_map = {'Seldom': 1, 'Sometimes': 2, 'Usually': 3, 'Most-Often': 4}
-        yes_no_map = {'YES': 1, 'NO': 0} # Não precisa mais de 'YES ' pois o strip resolveu
-        
+        yes_no_map = {'YES': 1, 'NO': 0, 'YES ': 1} # 'YES ' com espaço p/ garantir
+
         target = 'Expert Diagnose'
         potential_symptoms = [
             'Sadness', 'Euphoria', 'Exhausted', 'Sleep_dissorder',
             'Mood_Swing', 'Suicidal_thoughts', 'Anorexia', 'Sexual_Activity'
         ]
         
-        # Filtra colunas existentes
+        # Agora que renomeamos, 'symptoms' deve encontrar todas as 8 colunas
         symptoms = [c for c in potential_symptoms if c in df.columns]
 
         if not symptoms:
             return None
 
+        # 4. Conversão de Texto para Números
         for col in df.columns:
             if col == target:
                 continue
 
             if df[col].dtype == 'object':
-                # Verifica o primeiro valor da coluna para decidir a estratégia
-                first_val = df[col].dropna().iloc[0] if not df[col].dropna().empty else ""
-                
+                # Pega o primeiro valor válido para decidir qual mapa usar
+                try:
+                    first_val = df[col].dropna().iloc[0]
+                except IndexError:
+                    continue
+
                 if first_val in freq_map:
                     df[col] = df[col].map(freq_map)
                 elif first_val in yes_no_map:
                     df[col] = df[col].map(yes_no_map)
                 else:
-                    # Fallback para LabelEncoder (Ex: Sexual_Activity "3 From 10")
+                    # Fallback
                     le = LabelEncoder()
                     df[col] = le.fit_transform(df[col].astype(str))
 
-        # Preencher nulos gerados por falhas de map com 0
         df = df.fillna(0)
 
         # 5. Agrupar e Calcular Média
         symptom_matrix = df.groupby(target)[symptoms].mean()
 
-        # 6. Forçar Classes e Ordem (Igual ao Colab)
+        # 6. Forçar a ordem das classes (Igual ao Colab)
         class_labels = ['Bipolar Type-1', 'Bipolar Type-2', 'Depression', 'Normal']
         symptom_matrix = symptom_matrix.reindex(class_labels, fill_value=0)
 
