@@ -51,9 +51,17 @@ const SintomasTab = () => {
   }, []);
 
   const getColor = (value: number, min: number, max: number) => {
-    const ratio = (value - min) / (max - min || 1);
+    // Evita divisão por zero se max e min forem iguais
+    const denominator = max - min || 1;
+    const ratio = (value - min) / denominator;
+    
+    // Simulação do 'magma_r' (Invertido: 0 = Claro/Amarelo, 1 = Escuro/Roxo)
+    // Low value (0) -> Hue ~60 (Amarelo), Lightness ~95%
+    // High value (max) -> Hue ~260 (Roxo), Lightness ~20%
+    
     const hue = 60 + (200 * ratio); 
     const lightness = 95 - (75 * ratio); 
+    
     return `hsl(${hue}, 70%, ${lightness}%)`;
   };
 

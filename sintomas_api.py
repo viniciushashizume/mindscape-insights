@@ -1,83 +1,58 @@
-# sintomas_api.py
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import pandas as pd
-import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-app = FastAPI()
+def plot_symptom_overlap_with_labels(df):
+    print("--- Insight Clínico: Assinatura Sintomática (Com Rótulos) ---")
 
-# Configuração de CORS para permitir que o Frontend (localhost:5173 ou similar) acesse o Backend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Em produção, especifique a URL do seu site
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    # 1. Definir sintomas
+    potential_symptoms = ['Sadness', 'Euphoria', 'Exhausted', 'Sleep_dissorder',
+                          'Mood_Swing', 'Suicidal_thoughts', 'Anorexia', 'Sexual_Activity']
 
-def processar_dataset():
-    try:
-        # Carregar o dataset
-        df = pd.read_csv('Dataset-Mental-Disorders.csv')
+    symptoms = [c for c in potential_symptoms if c in df.columns]
+    target = 'Expert Diagnose'
 
-        # Remover colunas desnecessárias
-        if 'Patient Number' in df.columns:
-            df = df.drop('Patient Number', axis=1)
+    # 2. Definir os nomes das Classes (Baseado na ordem alfabética do LabelEncoder)
+    # 0: Bipolar 1, 1: Bipolar 2, 2: Depression, 3: Normal
+    class_labels = ['Bipolar Type-1', 'Bipolar Type-2', 'Depression', 'Normal']
 
-        # Mapeamentos (Baseado no seu código original)
-        freq_map = {'Seldom': 1, 'Sometimes': 2, 'Usually': 3, 'Most-Often': 4}
-        yes_no_map = {'YES': 1, 'NO': 0, 'YES ': 1, 'NO ': 0}
+    # Verifica se os sintomas existem no DF
+    if not symptoms or target not in df.columns:
+        print("Dados necessários não encontrados.")
+        return
 
-        # Aplicar mapeamentos
-        for col in df.columns:
-            # Ignorar a coluna de diagnóstico por enquanto
-            if col == 'Expert Diagnose':
-                continue
-                
-            if df[col].dtype == 'object':
-                # Tenta mapear frequência
-                if df[col].iloc[0] in freq_map:
-                    df[col] = df[col].map(freq_map)
-                # Tenta mapear Sim/Não
-                elif df[col].iloc[0] in yes_no_map:
-                    df[col] = df[col].map(yes_no_map)
-        
-        # Preencher valores nulos com 0
-        df = df.fillna(0)
+    # 3. Agrupar e Calcular a Média
+    symptom_matrix = df.groupby(target)[symptoms].mean()
 
-        # Agrupar por Diagnóstico e calcular a média (intensidade) dos sintomas
-        # Isso cria a matriz do Heatmap
-        heatmap_data = df.groupby('Expert Diagnose').mean()
+    # CORREÇÃO 1: Preencher valores vazios (NaN) com 0
+    symptom_matrix = symptom_matrix.fillna(0)
 
-        # Garantir que as classes desejadas existam e estejam na ordem correta
-        desired_order = ['Normal', 'Bipolar Type-1', 'Bipolar Type-2', 'Depression']
-        
-        # Filtrar apenas as colunas numéricas (sintomas)
-        heatmap_data = heatmap_data.select_dtypes(include=[np.number])
-        
-        # Reordenar linhas se existirem no dataset
-        heatmap_data = heatmap_data.reindex([d for d in desired_order if d in heatmap_data.index])
+    # CORREÇÃO 2: Verificar se a classe 'Normal' (índice 3 provavelmente) existe
+    # Se ela não existir na matriz (porque não tinha dados), vamos criá-la com zeros
+    # Nota: Isso assume que o LabelEncoder usou 0,1,2,3.
+    # Se 'Normal' for o índice 3 e não estiver no índice, adicionamos:
+    if 3 not in symptom_matrix.index:
+         # Adiciona uma linha de zeros para a classe 3
+         symptom_matrix.loc[3] = 0
+         # Reordena para garantir 0, 1, 2, 3
+         symptom_matrix = symptom_matrix.sort_index()
 
-        # Formatar para JSON
-        result = {
-            "symptoms": list(heatmap_data.columns),
-            "diagnoses": list(heatmap_data.index),
-            "matrix": heatmap_data.values.tolist(),
-            "min_val": float(heatmap_data.min().min()),
-            "max_val": float(heatmap_data.max().max())
-        }
-        
-        return result
+    # 4. Plotar (Adicionando vmin=0 para forçar a escala a começar do zero)
+    plt.figure(figsize=(12, 6))
 
-    except Exception as e:
-        print(f"Erro ao processar dataset: {e}")
-        return None
+    sns.heatmap(symptom_matrix, cmap='magma_r', annot=True, fmt='.2f',
+                yticklabels=class_labels,
+                vmin=0)  # <--- Isso garante que o 0 tenha cor (provavelmente amar
 
-@app.get("/api/sintomas-heatmap")
-def get_sintomas_heatmap():
-    data = processar_dataset()
-    if data:
-        return data
-    return {"error": "Erro ao processar dados"}
+    plt.title('Assinatura Sintomática: Intensidade dos Sintomas por Diagnóstico')
+    plt.ylabel('Diagnóstico')
+    plt.xlabel('Sintomas')
+    plt.yticks(rotation=0) # Deixa os nomes na horizontal para facilitar leitura
+    plt.show()
 
-# Para rodar: uvicorn sintomas_api:app --reload
+    print("Insight Atualizado:")
+    print(f"- Observe a linha 'Normal': Ela deve ser a mais clara (valores baixos), indicando ausência de sintomas graves.")
+    print(f"- Compare 'Normal' com 'Depression': A diferença na coluna 'Sadness' deve ser gritante.")
+
+# Executar
+if 'df_clinical' in globals():
+    plot_symptom_overlap_with_labels(df_clinical)

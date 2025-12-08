@@ -1,4 +1,4 @@
-# api.py (Unificado)
+# api.py (Unificado e Corrigido)
 import pandas as pd
 import numpy as np
 import os
@@ -156,60 +156,89 @@ def get_dashboard_data():
 
 
 # ==========================================
-# PARTE 2: LÓGICA DE SINTOMAS (HEATMAP)
+# PARTE 2: LÓGICA DE SINTOMAS (HEATMAP) - CORRIGIDA (IDENTICA AO COLAB)
 # ==========================================
+# No arquivo: viniciushashizume/.../api.py
+
 def processar_sintomas():
     try:
-        # Tenta encontrar o arquivo correto
         filename = 'Dataset-Mental-Disorders.csv'
         if not os.path.exists(filename):
-             # Fallback caso o nome esteja diferente ou não exista
              print(f"[Sintomas] AVISO: '{filename}' não encontrado.")
              return None
 
-        print(f"[Sintomas] Lendo arquivo: {filename}")
+        # 1. Carregar CSV
         df = pd.read_csv(filename)
 
         if 'Patient Number' in df.columns:
             df = df.drop('Patient Number', axis=1)
 
+        # 2. Renomear colunas (Essencial para encontrar os sintomas da lista)
+        col_rename_map = {
+            'Euphoric': 'Euphoria',
+            'Sleep dissorder': 'Sleep_dissorder',
+            'Mood Swing': 'Mood_Swing',
+            'Suicidal thoughts': 'Suicidal_thoughts',
+            'Anorxia': 'Anorexia',
+            'Sexual Activity': 'Sexual_Activity'
+        }
+        df = df.rename(columns=col_rename_map)
+
+        # 3. Limpeza Geral de Espaços (A CORREÇÃO PRINCIPAL)
+        # Remove espaços antes/depois de textos em TODAS as colunas de texto
+        # Isso garante que 'Usually ' vire 'Usually' e bata com o mapa.
+        df_obj = df.select_dtypes(['object'])
+        df[df_obj.columns] = df_obj.apply(lambda x: x.str.strip())
+
+        # 4. Mapas e Lógica do Colab (sintomas.py)
         freq_map = {'Seldom': 1, 'Sometimes': 2, 'Usually': 3, 'Most-Often': 4}
-        yes_no_map = {'YES': 1, 'NO': 0, 'YES ': 1, 'NO ': 0}
+        yes_no_map = {'YES': 1, 'NO': 0} # Não precisa mais de 'YES ' pois o strip resolveu
+        
+        target = 'Expert Diagnose'
+        potential_symptoms = [
+            'Sadness', 'Euphoria', 'Exhausted', 'Sleep_dissorder',
+            'Mood_Swing', 'Suicidal_thoughts', 'Anorexia', 'Sexual_Activity'
+        ]
+        
+        # Filtra colunas existentes
+        symptoms = [c for c in potential_symptoms if c in df.columns]
+
+        if not symptoms:
+            return None
 
         for col in df.columns:
-            if col == 'Expert Diagnose':
+            if col == target:
                 continue
+
             if df[col].dtype == 'object':
+                # Verifica o primeiro valor da coluna para decidir a estratégia
                 first_val = df[col].dropna().iloc[0] if not df[col].dropna().empty else ""
+                
                 if first_val in freq_map:
                     df[col] = df[col].map(freq_map)
                 elif first_val in yes_no_map:
                     df[col] = df[col].map(yes_no_map)
-        
+                else:
+                    # Fallback para LabelEncoder (Ex: Sexual_Activity "3 From 10")
+                    le = LabelEncoder()
+                    df[col] = le.fit_transform(df[col].astype(str))
+
+        # Preencher nulos gerados por falhas de map com 0
         df = df.fillna(0)
 
-        # Validação da coluna Expert Diagnose
-        if 'Expert Diagnose' not in df.columns:
-             # Tenta achar coluna parecida
-             possiveis = [c for c in df.columns if 'Diagnos' in c]
-             if possiveis:
-                 df = df.rename(columns={possiveis[0]: 'Expert Diagnose'})
-             else:
-                 return None
+        # 5. Agrupar e Calcular Média
+        symptom_matrix = df.groupby(target)[symptoms].mean()
 
-        heatmap_data = df.groupby('Expert Diagnose').mean(numeric_only=True)
-        heatmap_data = heatmap_data.select_dtypes(include=[np.number])
-
-        # Ordenação Específica
-        desired_order = ['Normal', 'Bipolar Type-1', 'Bipolar Type-2', 'Depression']
-        heatmap_data = heatmap_data.reindex([d for d in desired_order if d in heatmap_data.index])
+        # 6. Forçar Classes e Ordem (Igual ao Colab)
+        class_labels = ['Bipolar Type-1', 'Bipolar Type-2', 'Depression', 'Normal']
+        symptom_matrix = symptom_matrix.reindex(class_labels, fill_value=0)
 
         return {
-            "symptoms": list(heatmap_data.columns),
-            "diagnoses": list(heatmap_data.index),
-            "matrix": heatmap_data.values.tolist(),
-            "min_val": float(heatmap_data.min().min()),
-            "max_val": float(heatmap_data.max().max())
+            "symptoms": list(symptom_matrix.columns),
+            "diagnoses": list(symptom_matrix.index),
+            "matrix": symptom_matrix.values.tolist(),
+            "min_val": 0,
+            "max_val": float(symptom_matrix.max().max())
         }
 
     except Exception as e:
@@ -225,41 +254,22 @@ def get_sintomas_heatmap():
 
 
 # ==========================================
-# PARTE 3: LÓGICA DE LINGUÍSTICA (NLP) - CORRIGIDA
+# PARTE 3: LÓGICA DE LINGUÍSTICA (NLP)
 # ==========================================
 
 def get_vocab_cleaned(texts, final_stops):
-    """
-    Tokenização com limpeza rigorosa de pontuação para evitar que
-    palavras como 'me,' (com vírgula) passem pelo filtro de tamanho.
-    """
-    # Junta tudo e converte para minúsculas
     all_text = ' '.join(texts).lower()
-    
-    # Separa por espaços
     raw_words = all_text.split()
-    
     cleaned_words = []
     for w in raw_words:
-        # Remove pontuação das bordas da palavra (ex: "me," vira "me")
         clean_w = w.strip(".,!?:;\"'()[]{}*-")
-        
-        # Filtros:
-        # 1. Deve ter mais de 2 letras (remove 'i', 'am', 'me' se limpo corretamente)
-        # 2. Não pode estar na lista de stopwords
-        # 3. Deve ser alfabético (opcional, remove números soltos)
         if len(clean_w) > 2 and clean_w not in final_stops and clean_w.isalpha():
             cleaned_words.append(clean_w)
-            
     return cleaned_words
 
 def analyze_distinctive_words_logic(df, class_a_label, class_b_label):
-    # 1. Definição Avançada de Stopwords (Manual + Scikit-learn)
     base_stops = set(ENGLISH_STOP_WORDS)
-    
-    # Lista explícita com as palavras que você pediu para remover e variações comuns
     custom_stops = {
-        # Palavras solicitadas
         "me", "my", "myself", "i", "im", "i'm", "ive", "i've", "id", "i'd",
         "its", "it's", "dont", "don't", "cant", "can't", "wont", "won't",
         "didnt", "didn't", "doesnt", "doesn't", "isnt", "isn't", "arent", "aren't",
@@ -270,18 +280,14 @@ def analyze_distinctive_words_logic(df, class_a_label, class_b_label):
         "actually", "literally", "basically", "want", "know", "think", "going", "got", 
         "get", "make", "time", "day", "people", "thing", "things", "said"
     }
-    
     final_stops = base_stops.union(custom_stops)
 
-    # 2. Filtrar textos
     texts_a = df[df['status'] == class_a_label]['clean_statement'].astype(str)
     texts_b = df[df['status'] == class_b_label]['clean_statement'].astype(str)
 
-    # 3. Contagem com a nova função de limpeza
     vocab_a = Counter(get_vocab_cleaned(texts_a, final_stops))
     vocab_b = Counter(get_vocab_cleaned(texts_b, final_stops))
 
-    # 4. Cálculo de Pontuação
     total_a = sum(vocab_a.values())
     total_b = sum(vocab_b.values())
 
@@ -294,41 +300,28 @@ def analyze_distinctive_words_logic(df, class_a_label, class_b_label):
     for word in all_keys:
         freq_a = vocab_a.get(word, 0) / total_a
         freq_b = vocab_b.get(word, 0) / total_b
-        
-        # Score = diferença de frequência
         score = (freq_a - freq_b) * 1000
         distinctive_score[word] = score
 
-    # Ordenar do maior score positivo (mais frequente no diagnóstico)
-    top_a = sorted(distinctive_score.items(), key=lambda x: x[1], reverse=True)[:20] # Pegando top 20 para garantir
-    
-    # Formata para o Front-end
+    top_a = sorted(distinctive_score.items(), key=lambda x: x[1], reverse=True)[:20]
     result_data = [{"word": word, "score": round(score, 1)} for word, score in top_a if score > 0]
-    
-    # Retorna apenas os top 15 finais
     return result_data[:15]
 
 @app.get("/api/linguistica-data")
 def get_linguistica_data():
     filename = 'Combined Data.csv'
     if not os.path.exists(filename):
-        # Fallback para tentar achar em subpastas se necessário, ou retornar erro
-        return {"error": f"Arquivo '{filename}' não encontrado. Certifique-se de que ele está na pasta raiz do backend."}
+        return {"error": f"Arquivo '{filename}' não encontrado."}
     
     try:
-        # Carregar Dataset
         df = pd.read_csv(filename)
-        
-        # Normalização de colunas
         df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
         
-        # Ajuste de nomes de colunas (caso o CSV tenha 'statement' em vez de 'clean_statement')
         if 'statement' in df.columns and 'clean_statement' not in df.columns:
             df['clean_statement'] = df['statement']
             
-        # Verifica coluna de status
         if 'status' not in df.columns:
-             return {"error": "Coluna 'status' não encontrada no CSV. Verifique o arquivo."}
+             return {"error": "Coluna 'status' não encontrada no CSV."}
 
         df['clean_statement'] = df['clean_statement'].fillna('')
 
@@ -338,9 +331,7 @@ def get_linguistica_data():
         response_data = {}
 
         for diag in diagnosticos_alvo:
-            # Busca case-insensitive no dataset para garantir match (ex: 'depression' == 'Depression')
             unique_statuses = df['status'].unique()
-            
             match = next((s for s in unique_statuses if str(s).lower() == diag.lower()), None)
             match_normal = next((s for s in unique_statuses if str(s).lower() == base_normal.lower()), None)
             
@@ -358,5 +349,4 @@ def get_linguistica_data():
 
 if __name__ == "__main__":
     import uvicorn
-    # Roda tudo na porta 8000
     uvicorn.run(app, host="0.0.0.0", port=8000)
